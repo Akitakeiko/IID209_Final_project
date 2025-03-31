@@ -1,0 +1,877 @@
+---
+title: "ID209_FINAL_analysis: for subgroup 4 months and 12 months"
+author: "Emily Chen, Cheryl Gu, Haya Alhmyly"
+date: "2024-04-25"
+output: html_document
+---
+
+Our initial approach was using DADA2 on R platform to generate ASV table. 
+However, the ASV table has run into some unexpected issues when assigning the phylogenic tree, so we take Qiime2 pipeline as a second approach.
+
+-------------------------------Qiime2 approach----------------------------------
+
+# Qiime2 amplicon Installation
+```{bash}
+wget https://data.qiime2.org/distro/amplicon/qiime2-amplicon-2024.2-py38-osx-conda.yml
+CONDA_SUBDIR=osx-64 conda env create -n qiime2-amplicon-2024.2 --file qiime2-amplicon-2024.2-py38-osx-conda.yml
+conda config --set channel_priority flexible
+
+# cleanup after installation
+rm qiime2-amplicon-2024.2-py38-osx-conda.yml
+
+# activate Qiime2 environment, run this everytime you start
+conda activate qiime2-amplicon-2024.2
+conda config --env --set subdir osx-64
+```
+
+# Import data via Qiime2 manifest (list of raw files) 
+```{bash}
+# go to directory where input raw sequences and metadata stored
+cd /Users/akitakeiko/Downloads/iid209_project
+# import raw sequences
+qiime tools import --type 'SampleData[SequencesWithQuality]' --input-path manifest.tsv --output-path qiime2_output.qza --input-format SingleEndFastqManifestPhred33
+# use the summarize action from the demux plugin with the previously generated artifact as input and output the resulting visualization to the qualities.qzv file
+qiime demux summarize --i-data qiime2_output.qza --o-visualization qualities.qzv
+```
+
+# Denoising amplicon sequence variants
+```{bash}
+qiime dada2 denoise-single --i-demultiplexed-seqs qiime2_output.qza --p-trim-left 0 --p-trunc-len 240 --o-representative-sequences rep-seqs-dada2.qza --o-table table-dada2.qza --o-denoising-stats stats-dada2.qza
+
+# convert it to a visualization we can use qiime metadata tabulate.
+qiime metadata tabulate \
+  --m-input-file stats-dada2.qza \
+  --o-visualization stats-dada2.qzv
+  
+# optional
+mv rep-seqs-deblur.qza rep-seqs.qza
+mv table-deblur.qza table.qza
+```
+
+# Feature table and FeatureData summaries
+```{bash}
+qiime feature-table summarize \
+  --i-table table.qza \
+  --o-visualization table.qzv \
+  --m-sample-metadata-file sample-metadata.tsv
+  
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs.qza \
+  --o-visualization rep-seqs.qzv
+```
+
+# Generate a tree for phylogenetic diversity analyses
+```{bash}
+qiime phylogeny align-to-tree-mafft-fasttree \
+  --i-sequences rep-seqs.qza \
+  --o-alignment aligned-rep-seqs.qza \
+  --o-masked-alignment masked-aligned-rep-seqs.qza \
+  --o-tree unrooted-tree.qza \
+  --o-rooted-tree rooted-tree.qza
+
+# a visualization for the tree
+ qiime empress tree-plot \
+  --i-tree rooted_tree.qza \
+  --o-visualization empress.qzv
+```
+
+# Alpha and Beta diversity
+```{bash}
+# the sampling depth is determine by "table.qzv"
+qiime diversity core-metrics-phylogenetic \
+  --i-phylogeny rooted-tree.qza \
+  --i-table table.qza \
+  --p-sampling-depth 4141 \
+  --m-metadata-file sample-metadata-2.tsv \
+  --output-dir core-metrics-results
+
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity core-metrics-results/faith_pd_vector.qza \
+  --m-metadata-file sample-metadata-2.tsv \
+  --o-visualization core-metrics-results/faith-pd-group-significance.qzv
+
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity core-metrics-results/evenness_vector.qza \
+  --m-metadata-file sample-metadata-2.tsv \
+  --o-visualization core-metrics-results/evenness-group-significance.qzv
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata-2.tsv \
+  --m-metadata-column age \
+  --o-visualization core-metrics-results/unweighted-unifrac-age-significance.qzv \
+  --p-pairwise
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file sample-metadata-2.tsv \
+  --m-metadata-column diet \
+  --o-visualization core-metrics-results/unweighted-unifrac-diet-group-significance.qzv \
+  --p-pairwise
+
+qiime emperor plot \
+  --i-pcoa core-metrics-results/unweighted_unifrac_pcoa_results.qza \
+  --m-metadata-file sample-metadata-2.tsv \
+  --o-visualization core-metrics-results/unweighted-unifrac-emperor.qzv
+
+qiime emperor plot \
+  --i-pcoa core-metrics-results/bray_curtis_pcoa_results.qza \
+  --m-metadata-file sample-metadata-2.tsv \
+  --o-visualization core-metrics-results/bray-curtis-emperor.qzv
+  
+# or simply, just run this line
+qiime diversity core-metrics-phylogenetic \
+    --i-table table.qza \
+    --i-phylogeny tree/rooted_tree.qza \
+    --p-sampling-depth 4141 \
+    --m-metadata-file sample-metadata-2.tsv \
+    --output-dir diversity
+```
+
+# Statistical analysis
+```{bash}
+# alpha
+qiime diversity alpha-group-significance \
+    --i-alpha-diversity diversity/shannon_vector.qza \
+    --m-metadata-file sample-metadata-2.tsv \
+    --o-visualization diversity/alpha_groups.qzv
+    
+# beta
+qiime diversity adonis \
+    --i-distance-matrix diversity/weighted_unifrac_distance_matrix.qza \
+    --m-metadata-file sample-metadata-2.tsv \
+    --p-formula “collection” \
+    --p-n-jobs 2 \
+    --o-visualization diversity/permanova.qzv
+```
+
+# Taxonomic analysis
+```{bash}
+# used Naive Bayes classifier 
+qiime feature-classifier classify-sklearn \
+  --i-classifier silva-138-99-515-806-nb-classifier.qza \
+  --i-reads rep-seqs.qza \
+  --o-classification taxonomy.qza
+
+# visualization
+qiime metadata tabulate \
+  --m-input-file taxonomy.qza \
+  --o-visualization taxonomy.qzv
+
+# taxonomic composition of our samples with interactive bar plots
+qiime taxa barplot \
+  --i-table table.qza \
+  --i-taxonomy taxonomy.qza \
+  --m-metadata-file sample-metadata-2.tsv \
+  --o-visualization taxa-bar-plots.qzv
+```
+
+# ANCOM-BC
+```{bash}
+# performing a differential abundance test at a specific taxonomic level-species
+qiime taxa collapse \
+    --i-table table.qza \
+    --i-taxonomy taxonomy.qza \
+    --p-level 7 \
+    --o-collapsed-table species.qza
+
+qiime composition ancombc \
+  --i-table species.qza \
+  --m-metadata-file sample-metadata-2.tsv \
+  --p-formula 'collection' \
+  --o-differentials species-ancombc-collection.qza
+  
+qiime composition da-barplot \
+  --i-data species-ancombc-collection.qza \
+  --p-significance-threshold 0.05 \
+  --p-level-delimiter ';' \
+  --o-visualization species-da-barplot-collection-0.05.qzv    
+```
+
+# Export a ASV table for MaAsLin2
+```{bash}
+qiime taxa collapse \
+  --i-table table.qza \
+  --i-taxonomy taxonomy.qza \
+  --p-level 7 \
+  --o-collapsed-table species.qza
+
+qiime tools export \
+    --input-path species.qza \
+    --output-path exported
+biom convert -i exported/feature-table.biom -o species.tsv --to-tsv
+```
+
+#Set the file path for analyzing data: paired-end fastq files to be processed
+```{r}
+setwd("/Users/akitakeiko/Downloads/iid209_project/yiching")
+```
+
+#Load required library 
+```{r}
+library(dada2); packageVersion("dada2")
+library(readr) 
+library(vegan)
+library(tidyr)
+library(phyloseq)
+library(ape)
+library(ggplot2)
+library(GUniFrac)
+library(ALDEx2)
+library(edgeR)
+library(pscl)
+library(Maaslin2)
+library(Biostrings)
+library(ggpubr)
+library(tidyverse)
+library(broom)
+library(AICcmodavg)
+library(RVAideMemoire)
+theme_set(theme_bw())
+```
+
+#Preprocess metadata - we only want to compare two age groups: 4 months vs. 12 months
+```{r}
+raw_metadata <- read_tsv("/Users/akitakeiko/Downloads/iid209_project/metadata-he2019.tsv")
+raw_metadata <- raw_metadata[-1,] # this row contains types of variable in column
+
+metadata <- raw_metadata %>%
+  mutate(
+    age = case_when(
+      age == 4 ~ 0,      # Convert age 4 months to 0
+      age == 12 ~ 1,     # Convert age 12 months to 1
+      TRUE ~ as.integer(NA)  # Assign NA to any other age values
+    ),
+    diet = case_when(
+      diet == "Breast milk" ~ 0,
+      diet == "Standard infant formula" ~ 1,
+      diet == "Experimental infant formula" ~ 2,
+      TRUE ~ as.integer(NA)  # Assign NA to any unrecognized diet values
+    )
+  ) %>%
+  drop_na()
+
+metadata <- metadata[, c(1, 5, 7, 8)] # keep only the columns we need
+
+colnames(metadata)[1] <- "sample.id" # change sample-id to sample.id to avoid future confusion
+
+write_csv(metadata, "metadata_all_DADA2.csv") # save it for future reproduce
+```
+
+
+Data requirement: 
+- Samples have been demultiplexed, i.e. split into individual per-sample fastq files.
+- Non-biological nucleotides have been removed, e.g. primers, adapters, linkers, etc.
+- If paired-end sequencing data, the forward and reverse fastq files contain reads in matched order.
+
+#Load metadata if the analysis starts here
+```{r}
+#metadata <- read.csv("metadata_all_DADA2_ver1.csv")
+```
+
+#Set the file path for all the fastq sequence data
+```{r}
+path <- "~/Downloads/iid209_project/PRJEB30072"
+list.files(path)
+```
+#Make sample lists
+```{r}
+# Assuming df is your dataframe with a column 'sample.id' for the specific samples
+specific_samples <- metadata$sample.id
+
+# Construct the pattern to match the fastq files based on your specific sample names
+pattern <- paste0(specific_samples, ".fastq.gz")
+
+# Initialize a vector to hold the matched file names
+fnSingles <- c()
+
+# List all files in the path with the .fastq.gz extension
+all_files <- list.files(path, pattern="fastq.gz$", full.names = TRUE)
+
+# Loop through the specific sample IDs and select the matching files
+for (sample_id in specific_samples) {
+  # Construct the regex pattern for this specific sample
+  sample_pattern <- paste0("^", sample_id, "\\.fastq\\.gz$")
+  matched_files <- all_files[grepl(sample_pattern, basename(all_files))]
+  
+  # Add matched files to the list
+  fnSingles <- c(fnSingles, matched_files)
+}
+
+# Sort the file names
+fnSingles <- sort(fnSingles)
+
+# Extract sample names - assuming the sample ID is the complete file name before the extension
+sample.names <- sapply(strsplit(basename(fnSingles), "\\."), `[`, 1)
+```
+
+--------------------------------Quality Check-----------------------------------
+#Quality profiles (original sequencing qualities)
+Visualizing the quality profiles of the forward reads
+This example the forward read provide good sequencing quality, no need to extra trimmed the poor qualities. We generally advise trimming the last few nucleotides to avoid less well-controlled errors that can arise there.
+```{r}
+plotQualityProfile(fnSingles[3:4])
+```
+
+------------------------------Filtering and trim--------------------------------------
+#Filtering-set filtered files
+```{r}
+# Place filtered files in filtered/ subdirectory
+##Creating Paths for Filtered Forward Read Files
+filtSe <- file.path(path, "filtered", paste0(sample.names, "_filt.fastq.gz")) 
+##Assigning Names to the File Path Vectors:
+names(fnSingles) <- sample.names
+
+#names(filtFs) <- sample.names: This line assigns the sample.names vector as the names of the elements in the filtFs vector. This is useful for referencing these paths by sample name later in the code or in analyses, providing a direct way to access paths based on sample identifiers.
+```
+
+##Filtering and trimming##
+While trimming generally refers to modifying the read itself by shortening it to remove low-quality ends or non-target sequences (like adapters), filtering refers to the outright removal of reads from the dataset based on quality or content criteria. 
+
+#Filtering and trimming
+We’ll use standard filtering parameters: maxN=0 (DADA2 requires no Ns), truncQ=2, rm.phix=TRUE and maxEE=2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores.
+```{r}
+out <- filterAndTrim(fnSingles, filtSe,  
+                    truncLen=240, # specify truncation lens (forward,reverse)
+                    maxN=0, maxEE=c(2), truncQ=1, rm.phix=TRUE,
+                    compress=TRUE, multithread=FALSE) # On Windows set multithread=FALSE
+head(out)
+print(out)
+
+#filterAndTrim() = filter & trim assigned raw data
+#maxN=0 => sequences are discarded if they contain any 'N' bases
+#maxEE=c(2,2) => Sets the maximum expected errors allowed in a sequence. Sequences with a sum of expected errors higher than 2 in either the forward or reverse reads will be discarded. Expected errors are calculated from the quality scores of the reads.
+#truncQ=2 =>  Trims the reads at the first occurrence of a quality score less than or equal to 2, starting from the end of the read.
+#rm.phix=TRUE => If set to true, this removes any reads matching the PhiX control used in Illumina sequencing platforms, which is a common contaminant.
+```
+
+##Learn the error rate## from here use filtered data !
+The DADA2 algorithm makes use of a "parametric error model (err)" and every amplicon dataset has a different set of error rates. The learnErrors method learns this error model from the data, by alternating estimation of the error rates and inference of sample composition until they converge on a jointly consistent solution. As in many machine-learning problems, the algorithm must begin with an initial guess, for which the maximum possible error rates in this data are used (the error rates if only the most abundant sequence is correct and all the rest are errors).
+
+#error rate for forward sequences
+```{r}
+errF <- learnErrors(filtSe, multithread=FALSE)
+```
+
+#plot error rates
+##Usually, red lines (AI-based prediction) need to close to the trend of black line (observed data)
+##In this scenario, it looks good and can proceed on 
+@Q-What if it doesn't look good ?
+```{r}
+plotErrors(errF, nominalQ=TRUE)
+```
+
+#Dereplication
+```{r, results=FALSE}
+#dereplication
+derep <- derepFastq(filtSe, verbose=TRUE)
+```
+
+
+----------------------------------Sample inference-----------------------------------------
+We are now ready to apply the core sample inference algorithm to the filtered and trimmed sequence data.
+
+#distinguishing unique seauence 
+```{r}
+dadaSe <- dada(filtSe, err=errF, multithread=FALSE)
+
+#data() => It takes as input a set of filtered sequencing reads and performs sample inference. Specifically, it infers the sample composition by distinguishing sequencing errors from true biological variants (i.e., different species or strains).
+
+#filtFs: This parameter should be a vector of file paths pointing to the filtered forward read files. These files are expected to have gone through quality filtering and possibly trimming, thus are ready for the error modeling step.
+#err=errF: This specifies the error model to use when processing the reads. errF is typically derived from earlier steps in the DADA2 pipeline, where an error model is constructed based on a subset of the data (or possibly the whole dataset if computationally feasible). This error model quantitatively describes how likely it is for each type of base call error (e.g., an A being called as a G) to occur at each position in the read.
+#multithread=TRUE: Enables the use of multiple CPU threads to speed up the execution of the function. This is particularly useful for large datasets, as the error modeling and inference process is computationally intensive. Note: On some systems, like Windows, multithreading in R can be problematic and might need to be disabled (set to FALSE).
+```
+
+#Inspecting the returned dada-class object:
+Example interpretation: The DADA2 algorithm inferred 128 true sequence variants from the 1979 unique sequences in the first sample. There is much more to the dada-class return object than this (see help("dada-class") for some info), including multiple diagnostics about the quality of each denoised sequence variant, but that is beyond the scope of an introductory tutorial.
+```{r}
+dadaSe[[1]] # inspecting for sample 1# in filtered forward sequence
+```
+
+--------------------------Construct sequence table------------------------------
+We can now construct an amplicon sequence variant table (ASV) table, a higher-resolution version of the OTU table produced by traditional methods.
+
+Make the ASV table dataframe
+```{r}
+seqtab <- makeSequenceTable(dadaSe)
+dim(seqtab) #returns the dimensions of an object, such as a matrix or data frame.
+
+#makeSequenceTable() => compiles the results of merged read pairs (from the mergePairs function) into a single sequence table. The sequence table is a matrix where rows correspond to unique sequence variants (previously termed Amplicon Sequence Variants, ASVs), and columns correspond to samples.
+
+```
+
+#Inspecting final sequences length per reads after merge reverse+forward
+In this case, 1 read has 251 nucelotides, 88 has 252 nucleotides...
+```{r}
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+```
+
+-------------------------------Remove chimeras----------------------------------
+The core dada method corrects substitution and indel errors, but chimeras remain. Fortunately, the accuracy of sequence variants after denoising makes identifying chimeric ASVs simpler than when dealing with fuzzy OTUs. Chimeric sequences are identified if they can be exactly reconstructed by combining a left-segment and a right-segment from two more abundant “parent” sequences.
+
+What is Chimeras ?
+"chimeras" refer to artificial sequences that are mistakenly assembled during the sequencing process. They are formed when two or more distinct parental sequences are erroneously joined together to form a single sequence. 
+
+#Detect chimera and removing it
+```{r}
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=FALSE, verbose=TRUE)
+dim(seqtab.nochim)
+
+#removeBimeraDenovo() = remove chimeric sequences from the sequence table seqtab. 
+#method="consensus" = Specifies the method used for chimera detection. The consensus method aggregates information across the entire dataset to determine if a sequence is likely to be chimeric.
+#verbose=TRUE = This flag tells the function to provide more detailed output about the process, which can be helpful for troubleshooting or understanding the procedure.
+```
+
+#Calculating Proportion of Non-Chimeric Sequences
+```{r}
+sum(seqtab.nochim)/sum(seqtab)
+```
+
+-----------------Final check !Track reads through the pipeline------------------
+As a final check of our progress, we’ll look at the number of reads that made it through each step in the pipeline:
+```{r}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaSe, getN), rowSums(seqtab.nochim))
+colnames(track) <- c("input", "filtered", "denoised", "nonchim")
+rownames(track) <- sample.names
+head(track)
+```
+
+------------------------------Assign taxonomy-----------------------------------
+It is common at this point, especially in 16S/18S/ITS amplicon sequencing, to assign taxonomy to the sequence variants. The DADA2 package provides a native implementation of the naive Bayesian classifier method for this purpose. The assignTaxonomy function takes as input a set of sequences to be classified and a training set of reference sequences with known taxonomy, and outputs taxonomic assignments with at least minBoot bootstrap confidence.
+
+We maintain formatted training fastas for the RDP training set, GreenGenes clustered at 97% identity, and the Silva reference database, and additional trainings fastas suitable for protists and certain specific environments have been contributed. For fungal taxonomy, the General Fasta release files from the UNITE ITS database can be used as is. To follow along, download the silva_nr_v132_train_set.fa.gz file, and place it in the directory with the fastq files.
+
+#Assigning taxanomy from reference databse for ASV_table
+```{r}
+taxa <- assignTaxonomy(seqtab.nochim, 
+                       "~/Downloads/ps2/silva_nr_v132_train_set.fa.gz", 
+                       multithread=FALSE)
+```
+
+```{r}
+taxa.print <- taxa
+rownames(taxa.print) <- NULL
+head(taxa.print)
+#taxa is the final ASV_table we get
+```
+```{r}
+# Aggregate at the "Order" level
+ps.order <- tax_glom(ps, "Order")
+
+# You can then access the OTU table (now Order-level table)
+order_table <- otu_table(ps.order)
+
+# View the table
+print(order_table)
+```
+
+--------------------Import table to phyloseq---------------------------------------
+
+We can construct a simple sample data.frame from the information encoded in the filenames. Usually this step would instead involve reading the sample data in from a file.
+```{r}
+samples.out <- rownames(seqtab.nochim)
+
+# Assuming format: DietGenderAgeGroupSubject (e.g., KD4M001)
+# Extract diet, gender, age group, and subject information
+diet <- substr(samples.out, 1, 2)  # First two letters: Diet type (e.g., KD - Keto Diet)
+gender <- substr(samples.out, 3, 3) # Third letter: Gender (e.g., M/F)
+ageGroup <- as.integer(substr(samples.out, 4, 4)) # Fourth character: Age group (numeric)
+subject <- substr(samples.out, 5, 7) # Next three characters: Subject identifier
+
+# Create data frame with all parsed data
+samdf <- data.frame(Subject=subject, Diet=diet, Gender=gender, AgeGroup=ageGroup)
+
+# Assigning comparison group based on age groups of interest
+samdf$ComparisonGroup <- ifelse(samdf$AgeGroup %in% c(4, 12), "Target", "Control")
+
+# Setting row names to sample identifiers
+rownames(samdf) <- samples.out
+
+# Output the data frame
+print(samdf)
+```
+
+We now construct a phyloseq object directly from the dada2 outputs.
+Phyloseq object included: A phyloseq object is a comprehensive representation of phylogenetic sequence data, it included:
+the OTU (Operational Taxonomic Unit) table, 
+sample data, 
+taxonomic classifications, 
+phylogenetic tree (the tree is not included in this particular line of code)
+
+#Creating object for phyloseq
+```{r}
+# Check the column names of OTU table
+row.names(seqtab.nochim)
+
+# Check the row names of the metadata
+row.names(metadata)
+
+# If they don't match, you can set the row names of the metadata to match the OTU table like this:
+row.names(metadata) <- row.names(seqtab.nochim)
+
+ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), 
+               sample_data(samdf), 
+               tax_table(taxa))
+
+ps
+
+#out_table() = Creates an OTU table from seqtab.nochim, taxa_are_rows=FALSE = taxa in column
+#sample_data() = Associates the sample data to the phyloseq object
+#tax_table() =  Adds the taxonomic classification data to the phyloseq object
+```
+
+It is more convenient to use short names for our ASVs (e.g. ASV21) rather than the full DNA sequence when working with some of the tables and visualizations from phyloseq, but we want to keep the full DNA sequences for other purposes like merging with other datasets or indexing into reference databases like the Earth Microbiome Project. For that reason we’ll store the DNA sequences of our ASVs in the refseq slot of the phyloseq object, and then rename our taxa to a short string. That way, the short new taxa names will appear in tables and plots, and we can still recover the DNA sequences corresponding to each ASV as needed with refseq(ps).
+
+```{r}
+dna <- Biostrings::DNAStringSet(taxa_names(ps))
+names(dna) <- taxa_names(ps)
+ps <- merge_phyloseq(ps, dna)
+taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps)))
+ps
+```
+
+#Store otu_table and other information for reproduce
+```{r}
+#view otu_table as matrix
+otu_table(ps)
+#view otu_table as dataframe
+otu_df <- as.data.frame(otu_table(ps))
+head(otu_df)
+#view tax_table as dataframe
+tax_df <- as.data.frame(as.matrix(tax_table(ps)))
+head(tax_df)  # This works in RStudio or similar interfaces
+
+#extract the OTU and taxonomic tables,
+write.csv(otu_df, "otu_table.csv", row.names = FALSE)
+write.csv(tax_df, "tax_table.csv", row.names = FALSE)
+```
+
+
+
+----------Below is the downstream analysis with ASV table-----------------------
+
+Prepare library
+```{r}
+library(vegan)
+library(dplyr)
+library(phyloseq)
+#library(ape)
+library(ggplot2)
+library(readr)
+```
+
+Load dataset
+```{r}
+df <-read_tsv("species2.tsv")
+df <- as.data.frame(df)
+row.names(df) <- df[,1]
+df <- df[,-1]
+
+#transponse df
+transposed_df <- t(df)
+transposed_df <- as.data.frame(transposed_df)
+colnames(transposed_df) <- row.names(df)
+row.names(transposed_df) <- colnames(df)
+
+#load metadata
+metadata <-read_tsv("sample-metadata-2.tsv")
+metadata <- metadata[-1, ]
+metadata <- as.data.frame(metadata)
+row.names(metadata) <- metadata[,1]
+metadata <- metadata[,-1]
+
+#order all samples
+transposed_df <- transposed_df[order(row.names(transposed_df)), ]
+metadata <- metadata[order(row.names(metadata)), ]
+
+# link with the dollowing codes
+df.otu <- as.data.frame(transposed_df)
+df.metadata <- as.data.frame(metadata)
+row.names(df.otu) <- row.names(transposed_df)
+row.names(df.metadata) <- row.names(metadata)
+
+# Modify the 'diet' column based on specified conditions
+df.metadata <- df.metadata %>%
+  mutate(diet = case_when(
+    diet == "Breast milk" ~ 0,
+    diet == "Standard infant formula" ~ 1,
+    diet == "Experimental infant formula" ~ 2,
+    TRUE ~ NA_integer_  # Handles any unexpected cases
+  ))
+
+# Convert the 'diet' variable to a factor for categorical analysis
+df.metadata$diet <- as.factor(df.metadata$diet)
+```
+
+Create taxa_table
+```{r}
+# extracting taxa information from otu table
+taxa.name <- data.frame(ColumnName = names(df.otu))
+taxa.name <- taxa.name[-2, ] # delete the second observation (unidentified !)
+taxa.name <- as.data.frame(taxa.name)
+names(taxa.name)[1] <- "ColumnName"
+
+# Set row names from ASV1 to ASV459
+rownames(taxa.name) <- paste("ASV", 1:nrow(taxa.name), sep = "")
+
+# Create empty columns for taxonomic ranks
+taxa.name$kingdom <- NA
+taxa.name$phylum <- NA
+taxa.name$class <- NA
+taxa.name$order <- NA
+taxa.name$family <- NA
+taxa.name$genus <- NA
+taxa.name$species <- NA
+
+# extract information
+library(tidyverse)
+# Extract information based on prefixes and populate the dataframe
+taxa.name <- taxa.name %>%
+  mutate(kingdom = str_extract(ColumnName, "(?<=d__)[^.;]+"),
+         phylum = str_extract(ColumnName, "(?<=p__)[^.;]+"),
+         class = str_extract(ColumnName, "(?<=c__)[^.;]+"),
+         order = str_extract(ColumnName, "(?<=o__)[^.;]+"),
+         family = str_extract(ColumnName, "(?<=f__)[^.;]+"),
+         genus = str_extract(ColumnName, "(?<=g__)[^.;]+"),
+         species = str_extract(ColumnName, "(?<=s__)[^.;]+"))
+
+# replace NA to unidentified
+taxa.name[is.na(taxa.name)] <- "unidentified"
+```
+
+Modify dataset -- to align each sample with same id on otu table and metadata
+```{r}
+# Create a data frame with 135 empty rows and two columns
+id.list <- data.frame(sample.id = rep(NA, 135), transform.id = rep(NA, 135))
+id.list$sample.id <- df.metadata$sample.id
+id.list$transform.id <- paste0("s", 1:135)
+
+# Assign row names to id list, df.otu, and df.metadata
+rownames(df.metadata) <- id.list$transform.id
+rownames(id.list) <- id.list$transform.id
+rownames(df.otu) <- id.list$transform.id
+
+# Aligh ASV ID for otu table and asv table
+rownames(taxa.name) <- paste0("ASV", 1:459)
+
+# Create a sequence of new column names from ASV1 to ASV459
+df.otu <- select(df.otu, -2) #delete the second unassigned taxa
+new_column_names <- paste("ASV", 1:ncol(df.otu), sep="")
+
+# Rename the column names
+names(df.otu) <- new_column_names
+```
+
+Build subset dataset
+```{r}
+# Ensure that the row names are indeed aligned
+if (!all(rownames(df.metadata) == rownames(df.otu))) {
+  stop("Row names do not match between df.metadata and df.otu")
+}
+
+# Creating subgroups based on the 'age' variable in df.metadata
+df.metadata_age0 <- df.metadata[df.metadata$age == 4, ]
+df.metadata_age1 <- df.metadata[df.metadata$age == 12, ]
+
+# Applying the same subgroups to df.otu using the matched row names from df.metadata
+df.otu_age0 <- df.otu[rownames(df.metadata_age0), ]
+df.otu_age1 <- df.otu[rownames(df.metadata_age1), ]
+```
+
+Following codes focused on 4 months samples
+Assign subject to package
+```{r}
+# Vegan
+otu_table <- df.otu_age0
+
+#Phyloseq 
+# Ensure your taxonomy data is a character matrix
+rownames(taxa.name) <- paste0("ASV", 1:459)
+tax.matrix <- as.matrix(taxa.name)
+# Create the OTU table
+otu <- otu_table(df.otu_age0, taxa_are_rows = FALSE)
+# Create the sample data
+samp_data <- sample_data(df.metadata_age0)
+# Create the taxonomy table
+tax <- tax_table(tax.matrix)
+# Create the phyloseq object without the extra comma and with all components correctly formatted
+ps <- phyloseq(otu, samp_data, tax)
+
+#call out tree
+# Load the tree data from the RData file
+#load("tree_ver1.RData")
+
+# Replace the tip labels in the tree
+#asv_labels <- paste0("ASV", seq(length(tree$tip.label)))
+#print(asv_labels)
+#tree$tip.label <- asv_labels
+
+# Now create the phy_tree object and add it to your phyloseq object
+#phy_tree_obj <- phy_tree(tree)
+#ps <- merge_phyloseq(ps, phy_tree_obj)
+```
+
+Alpha diversity - estimate measurement
+```{r}
+# Shannon index
+shannon.index <- diversity(otu_table, index = "shannon")
+#-sum(ra_table[1,] * log(ra_table[1,]), na.rm = T) # check shannon Index for the sample.1
+
+# Simpson index
+simpson.index <- diversity(otu_table, index = "simpson")
+
+#manually calculate Shannon / simpson index for all samples:
+#shannon_indices <- apply(ra_table, 1, function(x) -sum(x * log(x), na.rm = TRUE))
+#simpsonI <- diversity(otu_table, index = "simpson")
+#1-sum((ra_table[1,])^2) # for the sample.1 [ individual sample]
+#simpsons_indices <- apply(ra_table, 1, function(x) 1 - sum(x^2))
+```
+
+Beta diversity - estimate measurement
+```{r}
+# Bray-Curtis measure
+BC <- vegdist(otu_table, method="bray")
+# for sample.59 and sample.60 : 0.4809806
+  #sum(abs(otu_table[59,] - otu_table[60,]))/sum(otu_table[59,] + otu_table[60,])
+#create data frame
+BC_df <- as.data.frame(as.matrix(BC))
+
+# UniFrac
+#Weighted UniFrac 
+#unifrac.un <- distance(ps, method = "unifrac", weighted = FALSE)
+# Calculate weighted UniFrac distances
+#unifrac.w <- distance(ps, method = "unifrac", weighted = TRUE)
+```
+
+Alpha diversity visualization - Richness plot
+```{r}
+#Normalization 
+total = median(sample_sums(ps))
+standf = function(x, t=total) round(t * (x / sum(x)))
+ps.normalized = transform_sample_counts(ps, standf)
+
+# Ensure 'diet' is a factor and set the levels and labels
+sample_data(ps.normalized)$diet <- factor(sample_data(ps.normalized)$diet, 
+                                          levels = c(0, 1, 2),
+                                          labels = c("breast milk", "formula milk", "experiment infant formula"))
+
+# Draw plot richness figure with "diet" as the grouping variable
+plot_richness(ps, measures = c("observed","shannon", "simpson"), x = "as.factor(diet)", color = "as.factor(diet)")
+
+# Draw plot richness figure with "diet" as the grouping variable
+plot_richness(ps.normalized, measures = c("observed","shannon", "simpson"), x = "as.factor(diet)", color = "as.factor(diet)")
+```
+
+Alpha diversity visualization - Abdundance plot
+```{r}
+#Normalization 
+total = median(sample_sums(ps))
+standf = function(x, t=total) round(t * (x / sum(x)))
+ps.normalized = transform_sample_counts(ps, standf)
+
+#Bar graph 
+
+##Individual Bar_plot
+#need to use ps.normalized to show even bar graph
+library(ggplot2)
+sample_data(ps.normalized)$diet <- factor(sample_data(ps.normalized)$diet,
+                                          levels = c("0", "1", "2"),
+                                          labels = c("Breast milk", "Standard infant formula", "Experimental infant formula"))
+
+plot_bar(ps.normalized, fill = "phylum") + 
+  geom_bar(aes(color=phylum, fill=phylum), stat="identity", position="stack") +
+  facet_wrap(~diet, scales = "free") +  # Removed the invalid 'space' argument
+  theme_minimal()
+
+## Bar_plot by group
+#Q: need to do even bar graph ? then it would need another normalization
+# Merge samples based on the "diet" variable
+phylo_diet <- merge_samples(ps.normalized, "diet")
+
+# Make a bar plot with fill based on a taxonomic category, let's say "phylum"
+plot_bar(phylo_diet, fill = "phylum") + 
+  geom_bar(aes(color = phylum, fill = phylum), stat = "identity", position = "stack") +
+  labs(x = "Diet", y = "Abundance") +
+  theme_minimal()
+```
+
+Heatmap
+```{r}
+# Use only top OTUs that represent at least 10% of reads in at least one sample
+ps.10percent <- filter_taxa(ps.normalized, function(x) sum(x > total*0.10) > 0, TRUE)
+ps.10percent # around top 50 taxa
+
+# heatmap to top 50 taxa
+plot_heatmap(ps.10percent, method = "NMDS", distance = "bray",
+             taxa.label = "phylum", taxa.order = "phylum",
+             trans=NULL, low="#1035AC", high="#FDFD96", na.value="#1035AC")
+
+# heat map to top 50 taxa, align by group diet 
+  #phyloseq can not sort sample, need to make a new sorted ps object
+# Extract sample data
+sample_data_df <- sample_data(ps.10percent)
+# Create a vector of sample names ordered by 'diet'
+# Assuming that 'sample_names' gives the names in the same order as the sample_data
+ordered_sample_names <- sample_names(ps.10percent)[order(sample_data_df$diet)]
+
+# Reorder the phyloseq object according to the 'diet' order using sample names
+ps_ordered <- prune_samples(ordered_sample_names, ps.10percent)
+
+# Now plot the heatmap with the ordered samples
+plot_heatmap(ps_ordered, method = "NMDS", distance = "bray",
+             taxa.label = "Genus", taxa.order = "Genus",
+             trans=NULL, low="#1035AC", high="#FDFD96", na.value="#1035AC")
+```
+
+Beta diversity - ordination
+```{r}
+#PCoA ordination
+bray <- ordinate(
+  physeq = ps, 
+  method = "PCoA", 
+  distance = "bray" 
+)
+
+## PCoA Ordination## can also change to UniFrac by replacing bray to unifrac.w
+# Define custom colors for the 'diet' variable
+colors <- c("lightblue", "maroon", "olivedrab")
+# Define custom labels for the legend
+labels <- c("breast milk", "formula milk", "experimental formula milk")
+
+# Begin plot ordination with proper closing parentheses
+plot <- plot_ordination(
+  physeq = ps,              # Phyloseq object
+  ordination = bray         # Ordination result; replace 'bray' with 'unifrac.w' for weighted UniFrac
+) + 
+  geom_point(aes(color = as.factor(diet)), size = 2) +  # Mapping color to 'diet' and adjusting point size
+  stat_ellipse(aes(color = as.factor(diet), fill = as.factor(diet)), geom = "polygon", alpha = 0, linetype = "dashed") +
+  scale_color_manual(values = colors, labels = labels) + # Custom colors and labels for the points
+  scale_fill_manual(values = colors, labels = labels, guide = FALSE) + # Custom colors for the ellipses
+  theme_linedraw() +                                    # Changes theme, removes grey background
+  theme(                                                 # Additional theme settings
+    legend.title = element_blank(),                     # Removes legend title
+    legend.position = "bottom",
+    legend.text = element_text(size = 10, face = "bold"), # Adjust the size for legend text
+    legend.key.size = unit(0.5, 'cm'),                  # Adjust the size for legend keys
+    axis.text.y = element_text(size = 10),
+    axis.title.y = element_text(size = 10),
+    axis.text.x = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    strip.text = element_text(face = "bold", size = 20)
+  ) +
+  guides(color = guide_legend(override.aes = list(shape = 16))) # Custom legend for the color guide
+
+# Print the plot
+print(plot)
+
+```
+
+
+
+
+
+
+
+
