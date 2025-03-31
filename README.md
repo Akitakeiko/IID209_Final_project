@@ -5,4 +5,4 @@ The final project explores how different infant formulas influence the developme
 
 The project employs a robust bioinformatics pipeline using the QIIME2 platform to analyze 16S rRNA amplicon sequencing data, covering processes from sequence importation and denoising to advanced statistical analyses, including alpha and beta diversity assessments. It highlights significant findings, such as the experimental formula potentially supporting a microbial diversity closer to that of breastfed infants, especially at earlier stages of development. The research provides valuable insights into optimizing infant formula compositions to better emulate the protective and developmental advantages of breastfeeding, contributing to discussions on early-life nutritional strategies and their long-term health impacts. 
 
-(See more detailed in my write-up file: IID209_final_project_writeup)
+(See more details in my written report: IID209_final_project_writeup)
